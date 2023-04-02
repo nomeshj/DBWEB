@@ -12,23 +12,30 @@ import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Date;
 import java.util.List;
+import java.util.StringJoiner;
 import java.util.concurrent.TimeUnit;
+
+import org.json.JSONObject;
 
 import com.model.rptGroups;
 import com.model.rptViews;
 
 public class HTML {
 static int columnsNumber = 0;
-	
+	static JSONObject object = new JSONObject();
+	static StringBuilder json = new StringBuilder();
 	private String recipients;
 	private String emailSubject;
 	
 	public String getRecipients() {
 		return recipients;
 	}
-
+	public JSONObject excelObject() {
+			return object;
+	}
 	public void setRecipients(String recipients) {
 		this.recipients = recipients;
 	}
@@ -64,7 +71,7 @@ static int columnsNumber = 0;
 		return startTime;
 	}
 	
-	private String getViewRunsValues(String[] vars, List sqlVals) {
+	public String getViewRunsValues(String[] vars, List sqlVals) {
 		
 		StringBuilder vals = new StringBuilder();
 		int length = sqlVals.size();
@@ -86,7 +93,7 @@ static int columnsNumber = 0;
 		return vals.toString();
 	}
 	
-	private List<rptGroups> getRPTGroups(Connection con) throws SQLException{
+	 List<rptGroups> getRPTGroups(Connection con) throws SQLException{
 		Statement st = con.createStatement();
 		ResultSet rs = st.executeQuery("select * from rptGroups");
 
@@ -118,7 +125,7 @@ static int columnsNumber = 0;
 		return groups;
 	}
 	
-	private List<rptViews> getRPTViews(Connection con) throws SQLException{
+	List<rptViews> getRPTViews(Connection con) throws SQLException{
 		Statement st = con.createStatement();
 		ResultSet rs1 = st.executeQuery("select * from rptViews");
 
@@ -272,6 +279,8 @@ static int columnsNumber = 0;
 		int maxrows = 0;
 		int maxcols = 0;
 		
+		JSONObject excelSQL = new JSONObject();
+		int index=1;
 		StringBuilder tableContent = new StringBuilder("");
 		for (int i = 0; i < groups.size(); i++) 
 		{	
@@ -282,6 +291,9 @@ static int columnsNumber = 0;
 			boolean flag = true;
 			String startTime = getTime();
 			tableCount=0;
+			
+			ArrayList listExecVars = new ArrayList();
+			ArrayList execSQL = new ArrayList();
 			
 			
 			if(groups.get(i).getHtmlTemplate()!=null)
@@ -294,6 +306,7 @@ static int columnsNumber = 0;
 			{
 				if (groups.get(i).getName().equals(views.get(j).getRptGroup()) && views.get(j).getRptGroup().equals(group)) {
 					
+					StringJoiner execVars = new StringJoiner("~");
 					tableCount++;
 					
 					boolean viewError = false;
@@ -362,20 +375,33 @@ static int columnsNumber = 0;
 
 					tableContent.append("<td>");
 					}
+					JSONObject obj = new JSONObject();
 					tableContent.append("<div><center>" + views.get(j).getHeader() + "</center></div>");
+					obj.put("header", views.get(j).getHeader());
+					
 					tableContent.append("<center>");
 					tableContent.append("<table border='1' cellpadding='0' cellspacing='0' style='border-collapse: collapse;'>");
 					tableContent.append("<tr>");
 
 					String replaced = views.get(j).getColHeader().replace("~", "");
 					String[] headers = replaced.split("</span>");
-
+					
+					StringBuilder table = new StringBuilder();
+					
+					StringJoiner seperator = new StringJoiner("~");
 					for (String col : headers) {
 						col = col.replace("<span", "");
 						tableContent.append("<th" + col);
+						if(col.contains(">"))
+						{
+							seperator.add(col.substring(col.indexOf(">")+1));
+						}else {							
+							seperator.add(col);
+						}
 						// tableContent.append(col);
 						tableContent.append("</th>");
 					}
+					table.append(seperator+"||");
 					
 					tableContent.append("</tr>");
 
@@ -395,15 +421,18 @@ static int columnsNumber = 0;
 							if (rs5.next()) {
 								viewError = false;
 								sqlVals.add(rs5.getString(1));
+								execVars.add(rs5.getString(1));
 								}
 							}
 							catch(Exception e) {
 								sqlVals.add(val);
+								execVars.add(val);
 								viewErrorValue = e.getMessage();
 								viewError = true;
 							}
 						} else {
 							sqlVals.add(val);
+							execVars.add(val);
 						}
 					}
 
@@ -413,7 +442,7 @@ static int columnsNumber = 0;
 					}
 					
 					SQL = SQL.replaceAll("\"", "'");
-
+					execSQL.add(SQL);
 					try {
 						ResultSet rs6 = st.executeQuery(SQL);
 						ResultSetMetaData rsmd = rs6.getMetaData();
@@ -421,34 +450,45 @@ static int columnsNumber = 0;
 						columnsNumber = rsmd.getColumnCount();
 						while (rs6.next()) {
 							tableContent.append("<tr>");
+							seperator = new StringJoiner("~");
 							for (int p = 1; p <= columnsNumber; p++) {
 								tableContent.append("<td>");
 								tableContent.append(rs6.getString(p));
+								seperator.add(rs6.getString(p));
 								tableContent.append("</td>");
 							}
+							table.append(seperator+"||");
 							tableContent.append("</tr>");
 						}
 					} catch (Exception e) {
 						tableContent.append("<tr>");
 						tableContent.append("<td colspan=\"" + columnsNumber + "\">");
+						table.append(e.getMessage()+"||");
 						tableContent.append(e.getMessage());
 						tableContent.append("</td>");
 						tableContent.append("</tr>");
 						errorFlag = true;
 						error = e.getMessage();
 					}
-
+					
+					obj.put("table",table);
 					flag = false;
 					
 					tableContent.append("</table>");
 					tableContent.append("</center>");
 					tableContent.append("<div><center>" + views.get(j).getFooter() + "</center></div>");
-
 					Instant finish = Instant.now();
 					long seconds = Duration.between(start, finish).toMillis(); // in millis
 
 					String hms = formatMillis(seconds);
 					tableContent.append("<div><center>" + hms + "</center></div>");
+					obj.put("footer", views.get(j).getFooter()+";"+hms);
+					
+					System.out.println("_--------------------------");
+					System.out.println(obj);
+					// main Object
+					object.put("table"+tableCount, obj);
+					System.out.println("_--------------------------");
 					
 					if(groups.get(i).getHtmlTemplate() == null)
 					{
@@ -471,7 +511,24 @@ static int columnsNumber = 0;
 
 			        template = templateContent;
 			        tableContent.delete(0,tableContent.length());
+			        
+			       
 					}// end of htmltemplate  block
+					listExecVars.add(execVars);
+					 
+					 JSONObject js = new JSONObject();
+					 js.put("name",views.get(j).getName());
+					 js.put("rptGroup", views.get(j).getRptGroup());
+					 js.put("excel", views.get(j).getExcel());
+					 js.put("sql", views.get(j).getSql());
+					 js.put("vars", views.get(j).getVars());
+					 js.put("vals", views.get(j).getVals());
+					 js.put("execVars", listExecVars);
+					 js.put("execVals", execSQL);
+
+					 excelSQL.put(String.valueOf(index), js);
+					 index++;
+					
 				} else {
 					count++;
 					if (count == views.size()) {
@@ -489,13 +546,21 @@ static int columnsNumber = 0;
 				tableContent.append("</table>");
 			}
 			}
-			
 			String endTime = getTime();
 			
 			// insert data in RPTGroupsRun table
 			groupsInsertMetadata(con, errorFlag, groups.get(i).getName(), startTime, endTime, values, error);
 		
 		} // end 1 for loop
+		String encodedString = Base64.getEncoder().encodeToString(excelSQL.toString().getBytes());
+		tableContent.append("<input type='hidden' id='excelSQL' value='"+encodedString+"' />");
+		if(templateFlag)
+		{
+			template=template+"<input type='hidden' id='excelSQL' value='"+encodedString+"' />";
+		}
+	
+		
+		System.out.println();
 		if(!templateFlag)
 		{
 			HTML = tableContent.toString();
@@ -504,7 +569,7 @@ static int columnsNumber = 0;
 		{
 			HTML = template;
 		}
-	
+	System.out.println(object);
 		return HTML;
 	}
 }
